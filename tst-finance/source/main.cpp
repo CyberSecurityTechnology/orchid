@@ -29,7 +29,7 @@
 #include <jwt/jwt.hpp>
 
 #include "baton.hpp"
-#include "endpoint.hpp"
+#include "chain.hpp"
 #include "load.hpp"
 #include "local.hpp"
 #include "sleep.hpp"

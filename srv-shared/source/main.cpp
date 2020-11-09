@@ -51,6 +51,7 @@
 #include "coinbase.hpp"
 #include "egress.hpp"
 #include "fiat.hpp"
+#include "gauge.hpp"
 #include "jsonrpc.hpp"
 #include "load.hpp"
 #include "local.hpp"
@@ -258,15 +259,16 @@ int Main(int argc, const char *const argv[]) {
 
 
     auto rpc(Locator::Parse(args["rpc"].as<std::string>()));
-    Endpoint endpoint(origin, rpc);
+    //args["chainid"].as<unsigned>()
+    auto chain(Wait(Chain::Create({origin, std::move(rpc)})));
 
     if (args.count("provider") != 0) {
-        const PasswordExecutor provider(endpoint, args["provider"].as<std::string>(), password);
+        const PasswordExecutor provider(*chain, args["provider"].as<std::string>(), password);
 
         Wait([&]() -> task<void> {
-            const auto height(co_await endpoint.Height());
+            const auto height(co_await chain->Height());
             static const Selector<std::tuple<uint256_t, Bytes, Bytes, Bytes>, Address> look("look");
-            if (Slice<1, 4>(co_await look.Call(endpoint, height, location, 90000, provider)) != std::tie(url, tls, gpg)) {
+            if (Slice<1, 4>(co_await look.Call(*chain, height, location, 90000, provider)) != std::tie(url, tls, gpg)) {
                 static const Selector<void, Bytes, Bytes, Bytes> move("move");
                 co_await provider.Send(location, 0, move(Beam(url), Beam(tls), {}));
             }
@@ -279,18 +281,21 @@ int Main(int argc, const char *const argv[]) {
             return nullptr;
 
         orc_assert_(args.count("executor") != 0, "must specify --executor unless --price is 0");
-        const PasswordExecutor executor(endpoint, args["executor"].as<std::string>(), password);
+        const PasswordExecutor executor(*chain, args["executor"].as<std::string>(), password);
         const auto recipient(args.count("recipient") == 0 ? Address(executor) : Address(args["recipient"].as<std::string>()));
 
         auto cashier(Break<Cashier>(
-            std::move(endpoint), price, executor,
-            Address(args["lottery"].as<std::string>()), args["chainid"].as<unsigned>(), recipient
+            std::move(chain), price, executor,
+            Address(args["lottery"].as<std::string>()), recipient
         ));
         cashier->Open(origin, Locator::Parse(args["ws"].as<std::string>()));
         return cashier;
     }());
 
-    auto market(Make<Market>(5*60*1000, origin, Wait(CoinbaseFiat(5*60*1000, origin, args["currency"].as<std::string>()))));
+    const unsigned milliseconds(5*60*1000);
+    auto fiat(Wait(CoinbaseFiat(milliseconds, origin, args["currency"].as<std::string>())));
+    auto gauge(Make<Gauge>(milliseconds, origin));
+    auto market(Make<Market>(std::move(fiat), std::move(gauge)));
 
     auto egress([&]() { if (false) {
 #ifdef __linux__

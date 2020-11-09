@@ -26,18 +26,39 @@
 #include <boost/random.hpp>
 #include <boost/random/random_device.hpp>
 
+#include "chain.hpp"
 #include "jsonrpc.hpp"
 #include "locator.hpp"
 #include "origin.hpp"
+#include "valve.hpp"
 
 namespace orc {
 
 class Client;
 class Market;
 
-class Network {
+struct Stake {
+    uint256_t amount_;
+    Maybe<std::string> url_;
+
+    Stake(uint256_t amount, Maybe<std::string> url) :
+        amount_(std::move(amount)),
+        url_(std::move(url))
+    {
+    }
+};
+
+struct Provider {
+    Address address_;
+    Locator locator_;
+    S<rtc::SSLFingerprint> fingerprint_;
+};
+
+class Network :
+    public Valve
+{
   private:
-    const Locator locator_;
+    const Chain chain_;
     const Address directory_;
     const Address location_;
 
@@ -47,10 +68,22 @@ class Network {
     boost::random::independent_bits_engine<boost::mt19937, 128, uint128_t> generator_;
 
   public:
-    Network(const std::string &rpc, Address directory, Address location, const S<Origin> &origin);
+    Network(Chain chain, Address directory, Address location, S<Market> market, S<Updated<Float>> oracle);
+
+    Network(const Network &) = delete;
+    Network(Network &&) = delete;
+
+    static task<S<Network>> Create(unsigned milliseconds, Chain chain, Address directory, Address location);
+
+    void Open();
+    task<void> Shut() noexcept override;
+
+    task<std::map<Address, Stake>> Scan();
+
+    task<Provider> Select(const std::string &name, const Address &provider);
 
     // XXX: this should be task<Client &> but cppcoro doesn't seem to support that
-    task<Client *> Select(BufferSunk &sunk, const S<Origin> &origin, const std::string &name, const Address &provider, const Address &lottery, const uint256_t &chain, const Secret &secret, const Address &funder, const char *justin);
+    task<Client *> Connect(BufferSunk &sunk, const S<Origin> &origin, const Provider &provider, const Chain &chain, const Address &lottery, const Secret &secret, const Address &funder, const char *justin);
 };
 
 }

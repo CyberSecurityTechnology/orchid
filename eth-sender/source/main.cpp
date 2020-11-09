@@ -39,11 +39,10 @@ namespace orc {
 namespace po = boost::program_options;
 
 uint256_t bid_(0);
-uint256_t chain_(0);
-S<Endpoint> endpoint_;
+S<Chain> chain_;
 S<Executor> executor_;
 std::optional<uint256_t> nonce_;
-std::string rpc_("http://127.0.0.1:8545/");
+Locator rpc_{"http", "127.0.0.1", "8545", "/"};
 
 class Args :
     public std::deque<std::string>
@@ -109,7 +108,21 @@ static Bytes32 Parse(Args &args) {
 template <>
 struct Option<uint256_t> {
 static uint256_t Parse(Args &args) {
-    return uint256_t(args());
+    auto arg(args());
+    Float shift(1);
+
+    auto last(arg.size());
+    for (;;) {
+        orc_assert(last-- != 0);
+        if (false);
+        else if (arg[last] == 'G')
+            shift *= Ten9;
+        else break;
+    }
+
+    if (shift == 1)
+        return uint256_t(arg);
+    return uint256_t(Float(arg.substr(0, last + 1)) * shift);
 } };
 
 template <>
@@ -118,15 +131,27 @@ static Address Parse(Args &args) {
     const auto arg(args());
     if (false);
     else if (arg == "tv0") {
-        orc_assert_(chain_ == 1, "tv0 is not on chain " << chain_);
+        orc_assert_(*chain_ == 1, "tv0 is not on chain " << chain_);
         return "0x1fb31CcF378FDE2bFa8f1C5F35888162cE11b24f"; }
     else if (arg == "OTT") {
-        orc_assert_(chain_ == 1, "OTT is not on chain " << chain_);
+        orc_assert_(*chain_ == 1, "OTT is not on chain " << chain_);
         return "0xff9978B7b309021D39a76f52Be377F2B95D72394"; }
     else if (arg == "OXT") {
-        orc_assert_(chain_ == 1, "OXT is not on chain " << chain_);
+        orc_assert_(*chain_ == 1, "OXT is not on chain " << chain_);
         return "0x4575f41308EC1483f3d399aa9a2826d74Da13Deb"; }
     else return arg;
+} };
+
+template <>
+struct Option<Locator> {
+static Locator Parse(Args &args) {
+    auto arg(args());
+    if (false);
+    else if (arg == "cloudflare")
+        arg = "https://cloudflare-eth.com/";
+    else if (arg == "ganache")
+        arg = "http://127.0.0.1:7545/";
+    return Locator::Parse(arg);
 } };
 
 template <>
@@ -134,15 +159,18 @@ struct Option<S<Executor>> {
 static S<Executor> Parse(Args &args) {
     const auto arg(args());
     if (arg.size() == 64)
-        return Make<SecretExecutor>(*endpoint_, Bless(arg));
+        return Make<SecretExecutor>(*chain_, Bless(arg));
     else
-        return Make<UnlockedExecutor>(*endpoint_, arg);
+        return Make<UnlockedExecutor>(*chain_, arg);
 } };
 
 template <>
 struct Option<Bytes> {
 static Bytes Parse(Args &args) {
-    return Bless(args());
+    auto code(args());
+    if (!code.empty() && code[0] == '@')
+        code = Load(code.substr(1));
+    return Bless(code);
 } };
 
 template <typename ...Types_, size_t ...Indices_>
@@ -187,19 +215,18 @@ task<int> Main(int argc, const char *const argv[]) { try {
     } }());
 
     const auto origin(Break<Local>());
-    endpoint_ = Make<Endpoint>(origin, Locator::Parse(rpc_), flags);
-    chain_ = co_await endpoint_->Chain();
+    chain_ = co_await Chain::Create(Endpoint{origin, rpc_}, flags);
 
     if (executor.empty())
-        executor_ = Make<MissingExecutor>(*endpoint_);
+        executor_ = Make<MissingExecutor>(*chain_);
     else {
         Args args{std::move(executor)};
         executor_ = Option<decltype(executor_)>::Parse(args);
     }
 
     const auto block([&]() -> task<Block> {
-        const auto height(co_await endpoint_->Height());
-        const auto block(co_await endpoint_->Header(height));
+        const auto height(co_await chain_->Height());
+        const auto block(co_await chain_->Header(height));
         co_return block;
     });
 
@@ -207,11 +234,11 @@ task<int> Main(int argc, const char *const argv[]) { try {
 
     } else if (command == "account") {
         const auto [address] = Options<Address>(args);
-        const auto [account] = co_await endpoint_->Get(co_await block(), address, nullptr);
+        const auto [account] = co_await chain_->Get(co_await block(), address, nullptr);
         std::cout << account.balance_ << std::endl;
 
     } else if (command == "accounts") {
-        for (const auto &account : co_await (*endpoint_)("personal_listAccounts", {}))
+        for (const auto &account : co_await (*chain_)("personal_listAccounts", {}))
             std::cout << Address(account.asString()) << std::endl;
 
     } else if (command == "address") {
@@ -226,19 +253,28 @@ task<int> Main(int argc, const char *const argv[]) { try {
     } else if (command == "balance") {
         const auto [token, address] = Options<Address, Address>(args);
         static Selector<uint256_t, Address> balanceOf("balanceOf");
-        const auto balance(co_await balanceOf.Call(*endpoint_, "latest", token, 90000, address));
+        const auto balance(co_await balanceOf.Call(*chain_, "latest", token, 90000, address));
         std::cout << balance << std::endl;
 
+    } else if (command == "code") {
+        const auto [address] = Options<Address>(args);
+        std::cout << (co_await chain_->Code(co_await block(), address)).hex() << std::endl;
+
     } else if (command == "deploy") {
-        auto [amount, code, data] = Options<uint256_t, std::string, Bytes>(args);
-        if (!code.empty() && code[0] == '@')
-            code = Load(code.substr(1));
-        const auto transaction(co_await executor_->Send(std::nullopt, amount, Tie(Bless(code), data)));
+        auto [amount, code, data] = Options<uint256_t, Bytes, Bytes>(args);
+        const auto transaction(co_await executor_->Send(std::nullopt, amount, Tie(code, data)));
         std::cout << transaction.hex() << std::endl;
 
     } else if (command == "derive") {
         const auto [secret] = Options<Bytes32>(args);
         std::cout << Commonize(secret).hex() << std::endl;
+
+    } else if (command == "factory") {
+        Options<>(args);
+        if (bid_ == 0)
+            bid_ = uint256_t(100 * Ten9);
+        Record record(*chain_, 0, bid_, 247000, std::nullopt, 0, Bless("0x608060405234801561001057600080fd5b50610134806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c80634af63f0214602d575b600080fd5b60cf60048036036040811015604157600080fd5b810190602081018135640100000000811115605b57600080fd5b820183602082011115606c57600080fd5b80359060200191846001830284011164010000000083111715608d57600080fd5b91908080601f016020809104026020016040519081016040528093929190818152602001838380828437600092019190915250929550509135925060eb915050565b604080516001600160a01b039092168252519081900360200190f35b6000818351602085016000f5939250505056fea26469706673582212206b44f8a82cb6b156bfcc3dc6aadd6df4eefd204bc928a4397fd15dacf6d5320564736f6c63430006020033"), 27, 0x247000, 0x2470);
+        std::cout << record.from_ << std::endl;
 
     } else if (command == "generate") {
         Options<>(args);
@@ -249,12 +285,20 @@ task<int> Main(int argc, const char *const argv[]) { try {
         auto [data] = Options<Bytes>(args);
         std::cout << Hash(data).hex() << std::endl;
 
+    } else if (command == "height") {
+        Options<>(args);
+        std::cout << co_await chain_->Height() << std::endl;
+
     } else if (command == "hex") {
         Options<>(args);
         std::cout << "0x";
         std::cout << std::setbase(16) << std::setfill('0');
         for (;;) {
+#ifdef _WIN32
+            const auto byte(getchar());
+#else
             const auto byte(getchar_unlocked());
+#endif
             if (byte == EOF)
                 break;
             std::cout << std::setw(2) << byte;
@@ -263,13 +307,13 @@ task<int> Main(int argc, const char *const argv[]) { try {
 
     } else if (command == "nonce") {
         const auto [address] = Options<Address>(args);
-        const auto [account] = co_await endpoint_->Get(co_await block(), address, nullptr);
+        const auto [account] = co_await chain_->Get(co_await block(), address, nullptr);
         std::cout << account.nonce_ << std::endl;
 
     } else if (command == "receipt") {
         const auto [transaction] = Options<Bytes32>(args);
         for (;;)
-            if (const auto receipt{co_await (*endpoint_)[transaction]}) {
+            if (const auto receipt{co_await (*chain_)[transaction]}) {
                 std::cout << receipt->contract_ << std::endl;
                 break;
             } else co_await Sleep(1000);
@@ -277,6 +321,17 @@ task<int> Main(int argc, const char *const argv[]) { try {
     } else if (command == "send") {
         const auto [recipient, amount, data] = Options<Address, uint256_t, Bytes>(args);
         const auto transaction(co_await executor_->Send(recipient, amount, data));
+        std::cout << transaction.hex() << std::endl;
+
+    } else if (command == "singleton") {
+        auto [code, salt] = Options<Bytes, Bytes32>(args);
+        static Selector<Address, Bytes, Bytes32> deploy("deploy");
+        const auto transaction(co_await executor_->Send(factory, 0, deploy(code, salt)));
+        std::cout << transaction.hex() << std::endl;
+
+    } else if (command == "submit") {
+        const auto [raw] = Options<Bytes>(args);
+        const auto transaction(co_await chain_->Send("eth_sendRawTransaction", {raw}));
         std::cout << transaction.hex() << std::endl;
 
     } else if (command == "transfer") {

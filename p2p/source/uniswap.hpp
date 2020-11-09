@@ -31,14 +31,14 @@ namespace orc {
 
 class Address;
 struct Block;
-class Endpoint;
+class Chain;
 struct Fiat;
 
 template <typename Type_>
 class Updated;
 
-task<Float> Uniswap(const Endpoint &endpoint, const Block &block, const Address &pair);
-task<S<Updated<Fiat>>> UniswapFiat(unsigned milliseconds, Endpoint endpoint);
+task<Float> Uniswap(const Chain &chain, const Block &block, const Address &pair);
+task<S<Updated<Fiat>>> UniswapFiat(unsigned milliseconds, Chain chain);
 
 }
 

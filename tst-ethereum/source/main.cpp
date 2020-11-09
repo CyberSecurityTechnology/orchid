@@ -58,7 +58,7 @@ Brick<Size_> Nonzero() {
 }
 
 struct Tester {
-    Endpoint &endpoint_;
+    Endpoint &chain_;
     uint256_t chain_;
 
     const Executor &deployer_;
@@ -67,7 +67,7 @@ struct Tester {
 
     task<Receipt> Receipt(const Bytes32 &transaction) {
         for (;;) {
-            if (auto maybe{co_await endpoint_[transaction]}) {
+            if (auto maybe{co_await chain_[transaction]}) {
                 auto &receipt(*maybe);
                 co_return std::move(receipt);
             }
@@ -101,7 +101,7 @@ struct Tester {
         > grab("grab");
 
         const auto show([&]() -> task<void> {
-            const auto [balance, escrow, unlock, verify, codehash, shared] = co_await look.Call(endpoint_, "latest", lottery, 90000, customer_, signer);
+            const auto [balance, escrow, unlock, verify, codehash, shared] = co_await look.Call(chain_, "latest", lottery, 90000, customer_, signer);
             Log() << std::dec << balance << " " << escrow << " | " << unlock << std::endl;
         });
 
@@ -185,7 +185,7 @@ struct Tester {
 
         const auto check([&](signed adjust) -> task<void> {
             balance += adjust;
-            const auto [escrow_balance, unlock_warned, bound] = co_await read.Call(endpoint_, "latest", lottery, 90000, customer_, signer, 0, args...);
+            const auto [escrow_balance, unlock_warned, bound] = co_await read.Call(chain_, "latest", lottery, 90000, customer_, signer, 0, args...);
             //Log() << std::dec << uint128_t(escrow_balance) << " " << uint128_t(escrow_balance >> 128) << std::endl;
             orc_assert(uint128_t(escrow_balance) == balance);
             orc_assert(uint128_t(escrow_balance >> 128) == escrow);
@@ -390,17 +390,17 @@ struct Tester {
 #endif
 
 #if 1
-        Log() << std::dec << co_await balanceOf.Call(endpoint_, "latest", token, 90000, lottery1tok) << std::endl;
+        Log() << std::dec << co_await balanceOf.Call(chain_, "latest", token, 90000, lottery1tok) << std::endl;
         co_await Test1("erc677", lottery1tok, [&](const Executor &sender, const Address &lottery, const uint256_t &value, const Address &funder, const Address &signer) -> task<void> {
             static Selector<void, Address, Address> gift("gift");
             co_await Audit("gift", co_await sender.Send(token, 0, transferAndCall(lottery, value, Beam(gift(funder, signer)))));
         }, [&](const Executor &sender, const Address &lottery, const uint256_t &value, const Address &signer, const checked_int256_t &adjust, const uint256_t &retrieve) -> task<void> {
-            Log() << std::dec << co_await balanceOf.Call(endpoint_, "latest", token, 90000, lottery1tok) << std::endl;
+            Log() << std::dec << co_await balanceOf.Call(chain_, "latest", token, 90000, lottery1tok) << std::endl;
             static Selector<void, Address, uint256_t> move("move");
             co_await Audit("move", co_await sender.Send(token, 0, transferAndCall(lottery, value, Beam(move(signer, Combine(adjust, retrieve))))));
-            Log() << std::dec << co_await balanceOf.Call(endpoint_, "latest", token, 90000, lottery1tok) << std::endl;
+            Log() << std::dec << co_await balanceOf.Call(chain_, "latest", token, 90000, lottery1tok) << std::endl;
         }, token);
-        Log() << std::dec << co_await balanceOf.Call(endpoint_, "latest", token, 90000, lottery1tok) << std::endl;
+        Log() << std::dec << co_await balanceOf.Call(chain_, "latest", token, 90000, lottery1tok) << std::endl;
 #endif
 #endif
 
@@ -447,22 +447,22 @@ task<int> Main(int argc, const char *const argv[]) {
     }
 
     const auto origin(Break<Local>());
-    Endpoint endpoint(origin, Locator::Parse(args["rpc"].as<std::string>()));
+    Endpoint chain(origin, Locator::Parse(args["rpc"].as<std::string>()));
 
     std::vector<UnlockedExecutor> accounts;
-    for (const auto &account : co_await endpoint("personal_listAccounts", {})) {
+    for (const auto &account : co_await chain("personal_listAccounts", {})) {
         Address address(account.asString());
-        co_await endpoint("personal_unlockAccount", {address, "", 60u});
-        accounts.emplace_back(endpoint, address);
+        co_await chain("personal_unlockAccount", {address, "", 60u});
+        accounts.emplace_back(chain, address);
     }
 
-    uint256_t chain(co_await endpoint.Chain());
+    uint256_t chain(co_await chain.Chain());
     Log() << std::dec << chain << std::endl;
     // XXX: work around a bug in Ganache
     if (chain == 1337) chain = 1;
 
     orc_assert(accounts.size() >= 3);
-    Tester tester{endpoint, chain, accounts[0], accounts[1], accounts[2]};
+    Tester tester{chain, chain, accounts[0], accounts[1], accounts[2]};
     co_await tester.Test();
 
     co_return 0;

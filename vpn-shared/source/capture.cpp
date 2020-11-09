@@ -674,7 +674,7 @@ static JSValue Print(JSContext *context, JSValueConst self, int argc, JSValueCon
     return JS_ThrowInternalError(context, "%s", error.what());
 } }
 
-static task<void> Single(BufferSunk &sunk, Heap &heap, Network &network, const S<Origin> &origin, const Host &local, unsigned hop, const boost::filesystem::path &group) { orc_block({
+static task<void> Single(BufferSunk &sunk, Heap &heap, const S<Network> &network, const S<Origin> &origin, const Host &local, unsigned hop, const boost::filesystem::path &group, const Locator &locator) { orc_block({
     const std::string hops("hops[" + std::to_string(hop) + "]");
     const auto protocol(heap.eval<std::string>(hops + ".protocol"));
     if (false) {
@@ -686,7 +686,8 @@ static task<void> Single(BufferSunk &sunk, Heap &heap, Network &network, const S
         const std::string curator(heap.eval<std::string>(hops + ".curator"));
         const Address provider(heap.eval<std::string>(hops + ".provider", "0x0000000000000000000000000000000000000000"));
         const std::string justin(heap.eval<std::string>(hops + ".justin", ""));
-        co_await network.Select(sunk, origin, curator, provider, lottery, chain, secret, funder, justin.empty() ? nullptr : boost::filesystem::absolute(justin, group).string().c_str());
+        const auto selected(co_await network->Select(curator, provider));
+        co_await network->Connect(sunk, origin, selected, {{origin, locator}, chain}, lottery, secret, funder, justin.empty() ? nullptr : boost::filesystem::absolute(justin, group).string().c_str());
     } else if (protocol == "openvpn") {
         co_await Connect(sunk, origin, local,
             heap.eval<std::string>(hops + ".ovpnfile"),
@@ -748,21 +749,25 @@ void Capture::Start(const std::string &path) {
     auto &sunk(Start());
 #endif
 
-    Network network(heap.eval<std::string>("rpc"), Address(heap.eval<std::string>("eth_directory")), Address(heap.eval<std::string>("eth_location")), local);
-
-    auto code([this, heap = std::move(heap), hops, local = std::move(local), network = std::move(network), host, group](BufferSunk &sunk) mutable -> task<void> {
+    auto code([this, heap = std::move(heap), hops, local = std::move(local), host, group](BufferSunk &sunk) mutable -> task<void> {
         locked_()->connected_ = false;
+
+        const auto locator(Locator::Parse(heap.eval<std::string>("rpc")));
+        Chain chain({local, locator}, 1);
+        const auto directory(Address(heap.eval<std::string>("eth_directory")));
+        const auto location(Address(heap.eval<std::string>("eth_location")));
+        auto network(co_await Network::Create(5*60*1000, std::move(chain), directory, location));
 
         auto origin(local);
 
         for (unsigned i(0); i != hops - 1; ++i) {
             auto remote(Break<BufferSink<Remote>>());
-            co_await Single(*remote, heap, network, origin, remote->Host(), i, group);
+            co_await Single(*remote, heap, network, origin, remote->Host(), i, group, locator);
             remote->Open();
             origin = std::move(remote);
         }
 
-        co_await Single(sunk, heap, network, origin, host, hops - 1, group);
+        co_await Single(sunk, heap, network, origin, host, hops - 1, group, locator);
         locked_()->connected_ = true;
     });
 

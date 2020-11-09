@@ -61,7 +61,7 @@ class Cashier :
     public Drain<Json::Value>
 {
   private:
-    const Endpoint endpoint_;
+    const S<Chain> chain_;
 
     const Float price_;
 
@@ -69,7 +69,6 @@ class Cashier :
     const S<Updated<uint256_t>> balance_;
 
     const Address lottery_;
-    const uint256_t chain_;
     const Address recipient_;
 
     U<Station> station_;
@@ -86,14 +85,14 @@ class Cashier :
     void Stop(const std::string &error) noexcept override;
 
   public:
-    Cashier(Endpoint endpoint, const Float &price, const Executor &executor, const Address &lottery, const uint256_t &chain, const Address &recipient);
+    Cashier(S<Chain> chain, const Float &price, const Executor &executor, const Address &lottery, const Address &recipient);
     ~Cashier() override = default;
 
     void Open(S<Origin> origin, Locator locator);
     task<void> Shut() noexcept override;
 
     auto Tuple() const {
-        return std::tie(lottery_, chain_, recipient_);
+        return std::tie(lottery_, chain_->operator const uint256_t &(), recipient_);
     }
 
     Float Bill(size_t size) const;

@@ -48,8 +48,8 @@ Address::Address(const Brick<64> &common) :
 {
 }
 
-std::ostream &operator <<(std::ostream &out, const Address &address) {
-    return out << eevm::to_checksum_address(Number<uint256_t>(address.num()).num<eevm::Address>());
+std::string Address::str() const {
+    return eevm::to_checksum_address(Number<uint256_t>(num()).num<eevm::Address>());
 }
 
 }

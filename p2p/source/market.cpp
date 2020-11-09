@@ -29,9 +29,9 @@ namespace orc {
 
 static const Float Two128(uint256_t(1) << 128);
 
-Market::Market(unsigned milliseconds, const S<Origin> &origin, S<Updated<Fiat>> fiat) :
+Market::Market(S<Updated<Fiat>> fiat, S<Gauge> gauge) :
     fiat_(std::move(fiat)),
-    gauge_(Make<Gauge>(milliseconds, origin))
+    gauge_(std::move(gauge))
 {
 }
 

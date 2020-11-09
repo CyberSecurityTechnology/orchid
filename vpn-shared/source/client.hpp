@@ -35,8 +35,8 @@
 #include <rtc_base/ssl_fingerprint.h>
 
 #include "bond.hpp"
+#include "chain.hpp"
 #include "crypto.hpp"
-#include "endpoint.hpp"
 #include "jsonrpc.hpp"
 #include "judge.hpp"
 #include "locked.hpp"
@@ -60,15 +60,14 @@ class Client :
   private:
     const rtc::scoped_refptr<rtc::RTCCertificate> local_;
 
-    const std::string url_;
-    const U<rtc::SSLFingerprint> remote_;
+    const Locator locator_;
+    const S<rtc::SSLFingerprint> remote_;
 
-    const Endpoint endpoint_;
     const S<Market> market_;
     const S<Updated<Float>> oracle_;
 
+    const Chain chain_;
     const Address lottery_;
-    const uint256_t chain_;
 
     const Secret secret_;
     const Address funder_;
@@ -123,9 +122,9 @@ class Client :
 
   public:
     Client(BufferDrain &drain,
-        std::string url, U<rtc::SSLFingerprint> remote,
-        Endpoint endpoint, S<Market> market, S<Updated<Float>> oracle,
-        const Address &lottery, const uint256_t &chain,
+        Locator locator, S<rtc::SSLFingerprint> remote,
+        S<Market> market, S<Updated<Float>> oracle,
+        Chain chain, const Address &lottery,
         const Secret &secret, const Address &funder,
         const Address &seller, const uint128_t &face,
         const char *justin
@@ -145,7 +144,7 @@ class Client :
     Float Judgement();
     uint128_t Face();
     uint256_t Gas();
-    const std::string &URL();
+    const Locator &URL();
     Address Recipient();
 };
 

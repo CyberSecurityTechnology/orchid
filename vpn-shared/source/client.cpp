@@ -111,7 +111,7 @@ cppcoro::shared_task<Bytes> Client::Ring(Address recipient) {
         co_return Bytes();
     static const Selector<std::tuple<Bytes>, Bytes, Address> ring_("ring");
     static const std::string latest("latest");
-    co_return std::get<0>(co_await ring_.Call(endpoint_, latest, seller_, 90000, hoarded_, recipient));
+    co_return std::get<0>(co_await ring_.Call(chain_, latest, seller_, 90000, hoarded_, recipient));
 }
 
 void Client::Land(Pipe *pipe, const Buffer &data) {
@@ -194,22 +194,21 @@ void Client::Stop() noexcept {
 }
 
 Client::Client(BufferDrain &drain,
-    std::string url, U<rtc::SSLFingerprint> remote,
-    Endpoint endpoint, S<Market> market, S<Updated<Float>> oracle,
-    const Address &lottery, const uint256_t &chain,
+    Locator locator, S<rtc::SSLFingerprint> remote,
+    S<Market> market, S<Updated<Float>> oracle,
+    Chain chain, const Address &lottery,
     const Secret &secret, const Address &funder,
     const Address &seller, const uint128_t &face,
     const char *justin
 ) :
     Pump(typeid(*this).name(), drain),
     local_(Certify()),
-    url_(std::move(url)),
+    locator_(std::move(locator)),
     remote_(std::move(remote)),
-    endpoint_(std::move(endpoint)),
     market_(std::move(market)),
     oracle_(std::move(oracle)),
+    chain_(std::move(chain)),
     lottery_(lottery),
-    chain_(chain),
     secret_(secret),
     funder_(funder),
     seller_(seller),
@@ -239,7 +238,7 @@ task<void> Client::Open(const S<Origin> &origin) {
         configuration.tls_ = local_;
         return configuration;
     }(), [&](std::string offer) -> task<std::string> {
-        const auto answer((co_await origin->Fetch("POST", Locator::Parse(url_), {}, offer, verify)).ok());
+        const auto answer((co_await origin->Fetch("POST", locator_, {}, offer, verify)).ok());
         if (Verbose) {
             Log() << "Offer: " << offer << std::endl;
             Log() << "Answer: " << answer << std::endl;
@@ -294,8 +293,8 @@ uint256_t Client::Gas() {
     return seller_ == Address(0) ? 84000 /*83267*/ : 103000;
 }
 
-const std::string &Client::URL() {
-    return url_;
+const Locator &Client::URL() {
+    return locator_;
 }
 
 Address Client::Recipient() {

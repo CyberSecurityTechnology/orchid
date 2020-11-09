@@ -23,16 +23,16 @@
 #ifndef ORCHID_EXECUTOR_HPP
 #define ORCHID_EXECUTOR_HPP
 
-#include "endpoint.hpp"
+#include "chain.hpp"
 
 namespace orc {
 
 class Executor {
   protected:
-    Endpoint &endpoint_;
+    Chain &chain_;
 
   public:
-    Executor(Endpoint &endpoint);
+    Executor(Chain &chain);
 
     virtual ~Executor() = default;
 
@@ -66,7 +66,7 @@ class UnlockedExecutor :
     Address common_;
 
   public:
-    UnlockedExecutor(Endpoint &endpoint, Address common);
+    UnlockedExecutor(Chain &chain, Address common);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;
@@ -84,7 +84,7 @@ class PasswordExecutor :
     std::string password_;
 
   public:
-    PasswordExecutor(Endpoint &endpoint, Address common, std::string password);
+    PasswordExecutor(Chain &chain, Address common, std::string password);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;
@@ -101,7 +101,7 @@ class SecretExecutor :
     Secret secret_;
 
   public:
-    SecretExecutor(Endpoint &endpoint, const Secret &secret);
+    SecretExecutor(Chain &chain, const Secret &secret);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;
