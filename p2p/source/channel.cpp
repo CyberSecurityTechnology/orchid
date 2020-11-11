@@ -56,17 +56,6 @@ orc_trace();
     }
 };
 
-task<Socket> Channel::Wire(BufferSunk &sunk, S<Origin> origin, Configuration configuration, const std::function<task<std::string> (std::string)> &respond) {
-    const auto client(Make<Actor>(std::move(origin), std::move(configuration)));
-    auto &channel(sunk.Wire<Channel>(client));
-    const auto answer(co_await respond(Strip(co_await client->Offer())));
-    co_await client->Negotiate(answer);
-    co_await channel.Open();
-    const auto candidate(co_await client->Candidate());
-    const auto &socket(candidate.address());
-    co_return Socket(socket.ipaddr().ipv4_address(), socket.port());
-}
-
 Channel::Channel(BufferDrain &drain, const S<Peer> &peer, const rtc::scoped_refptr<webrtc::DataChannelInterface> &channel) :
     Pump<Buffer>(typeid(*this).name(), drain),
     peer_(peer),
@@ -89,6 +78,17 @@ Channel::Channel(BufferDrain &drain, const S<Peer> &peer, int id, const std::str
         return (*peer)->CreateDataChannel(label, &init);
     }())
 {
+}
+
+task<Socket> Channel::Wire(BufferSunk &sunk, S<Origin> origin, Configuration configuration, const std::function<task<std::string> (std::string)> &respond) {
+    const auto client(Make<Actor>(std::move(origin), std::move(configuration)));
+    auto &channel(sunk.Wire<Channel>(client));
+    const auto answer(co_await respond(Strip(co_await client->Offer())));
+    co_await client->Negotiate(answer);
+    co_await channel.Open();
+    const auto candidate(co_await client->Candidate());
+    const auto &socket(candidate.address());
+    co_return Socket(socket.ipaddr().ipv4_address(), socket.port());
 }
 
 Channel::~Channel() {

@@ -20,26 +20,41 @@
 /* }}} */
 
 
-#ifndef ORCHID_UNISWAP_HPP
-#define ORCHID_UNISWAP_HPP
+#ifndef ORCHID_BUYER_HPP
+#define ORCHID_BUYER_HPP
 
+#include <boost/random.hpp>
+#include <boost/random/random_device.hpp>
+
+#include "chain.hpp"
 #include "float.hpp"
-#include "shared.hpp"
-#include "task.hpp"
+#include "jsonrpc.hpp"
+#include "locator.hpp"
+#include "origin.hpp"
+#include "updated.hpp"
+#include "valve.hpp"
 
 namespace orc {
 
-class Address;
-struct Block;
-class Chain;
-struct Fiat;
+class Market;
 
-template <typename Type_>
-class Updated;
+class Buyer :
+    public Valve
+{
+  private:
+    const S<Market> market_;
 
-task<Float> Uniswap(const Chain &chain, const Block &block, const Address &pair);
-task<S<Updated<Fiat>>> UniswapFiat(unsigned milliseconds, S<Chain> chain);
+  public:
+    Buyer(S<Market> market, S<Updated<Float>> oracle);
+
+    Buyer(const Buyer &) = delete;
+    Buyer(Buyer &&) = delete;
+
+    static task<S<Buyer>> Create(unsigned milliseconds, S<Chain> chain);
+
+    task<void> Shut() noexcept override;
+};
 
 }
 
-#endif//ORCHID_UNISWAP_HPP
+#endif//ORCHID_BUYER_HPP

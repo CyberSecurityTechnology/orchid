@@ -25,13 +25,15 @@
 
 namespace orc {
 
-Executor::Executor(Endpoint &endpoint) :
-    endpoint_(endpoint)
+Executor::Executor(Chain &chain) :
+    chain_(chain)
 {
 }
 
-task<Bytes32> Executor::Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
-    co_return co_await Send(nonce, bid, To((co_await endpoint_("eth_estimateGas", {Multi{
+task<Bytes32> Executor::Send(Execution execution, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
+    const auto bid(execution.bid ? *execution.bid : co_await chain_.Bid());
+    // XXX: do these lookups in parallel, or maybe cache the Bid or something?
+    co_return co_await Send(execution.nonce, bid, execution.gas ? *execution.gas : To((co_await chain_("eth_estimateGas", {Multi{
         {"from", operator Address()},
         {"gasPrice", bid},
         {"to", target},
@@ -41,7 +43,7 @@ task<Bytes32> Executor::Send(const std::optional<uint256_t> &nonce, const uint25
 }
 
 task<Bytes32> Executor::Send(const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
-    co_return co_await Send(std::nullopt, co_await endpoint_.Bid(), target, value, data);
+    co_return co_await Send({}, target, value, data);
 }
 
 
@@ -58,8 +60,8 @@ task<Bytes32> MissingExecutor::Send(const std::optional<uint256_t> &nonce, const
 }
 
 
-UnlockedExecutor::UnlockedExecutor(Endpoint &endpoint, Address common) :
-    Executor(endpoint),
+UnlockedExecutor::UnlockedExecutor(Chain &chain, Address common) :
+    Executor(chain),
     common_(std::move(common))
 {
 }
@@ -69,11 +71,11 @@ UnlockedExecutor::operator Address() const {
 }
 
 task<Signature> UnlockedExecutor::operator ()(const Buffer &data) const {
-    co_return Signature(Bless((co_await endpoint_("eth_sign", {common_, data})).asString()));
+    co_return Signature(Bless((co_await chain_("eth_sign", {common_, data})).asString()));
 }
 
 task<Bytes32> UnlockedExecutor::Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const uint64_t &gas, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
-    co_return co_await endpoint_.Send("eth_sendTransaction", {Multi{
+    co_return co_await chain_.Send("eth_sendTransaction", {Multi{
         {"from", common_},
         {"nonce", nonce},
         {"gasPrice", bid},
@@ -85,8 +87,8 @@ task<Bytes32> UnlockedExecutor::Send(const std::optional<uint256_t> &nonce, cons
 }
 
 
-PasswordExecutor::PasswordExecutor(Endpoint &endpoint, Address common, std::string password) :
-    Executor(endpoint),
+PasswordExecutor::PasswordExecutor(Chain &chain, Address common, std::string password) :
+    Executor(chain),
     common_(std::move(common)),
     password_(std::move(password))
 {
@@ -97,11 +99,11 @@ PasswordExecutor::operator Address() const {
 }
 
 task<Signature> PasswordExecutor::operator ()(const Buffer &data) const {
-    co_return Signature(Bless((co_await endpoint_("personal_sign", {common_, data, password_})).asString()));
+    co_return Signature(Bless((co_await chain_("personal_sign", {common_, data, password_})).asString()));
 }
 
 task<Bytes32> PasswordExecutor::Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const uint64_t &gas, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
-    co_return co_await endpoint_.Send("personal_sendTransaction", {Multi{
+    co_return co_await chain_.Send("personal_sendTransaction", {Multi{
         {"from", common_},
         {"nonce", nonce},
         {"gasPrice", bid},
@@ -113,8 +115,8 @@ task<Bytes32> PasswordExecutor::Send(const std::optional<uint256_t> &nonce, cons
 }
 
 
-SecretExecutor::SecretExecutor(Endpoint &endpoint, const Secret &secret) :
-    Executor(endpoint),
+SecretExecutor::SecretExecutor(Chain &chain, const Secret &secret) :
+    Executor(chain),
     secret_(secret)
 {
 }
@@ -128,13 +130,13 @@ task<Signature> SecretExecutor::operator ()(const Buffer &data) const {
 }
 
 task<Bytes32> SecretExecutor::Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const uint64_t &gas, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const {
-    co_return co_await Send(nonce, bid, gas, target, value, data, co_await endpoint_.Chain());
+    co_return co_await Send(nonce, bid, gas, target, value, data, chain_);
 }
 
 task<Bytes32> SecretExecutor::Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const uint64_t &gas, const std::optional<Address> &target, const uint256_t &value, const Buffer &data, const std::optional<uint256_t> &chain) const {
     const auto address(operator Address());
-    const uint256_t count(nonce ? *nonce : uint256_t((co_await endpoint_("eth_getTransactionCount", {address, "latest"})).asString()));
-    co_return co_await endpoint_.Send("eth_sendRawTransaction", {Subset([&]() { if (chain) {
+    const uint256_t count(nonce ? *nonce : uint256_t((co_await chain_("eth_getTransactionCount", {address, "latest"})).asString()));
+    co_return co_await chain_.Send("eth_sendRawTransaction", {Subset([&]() { if (chain) {
         const auto signature(Sign(secret_, Hash(Implode({count, bid, gas, target, value, data, *chain, uint256_t(0), uint256_t(0)}))));
         return Implode({count, bid, gas, target, value, data, signature.v_ + 35 + 2 * *chain, signature.r_, signature.s_});
     } else {

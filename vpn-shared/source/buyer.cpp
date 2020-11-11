@@ -20,26 +20,35 @@
 /* }}} */
 
 
-#ifndef ORCHID_UNISWAP_HPP
-#define ORCHID_UNISWAP_HPP
-
-#include "float.hpp"
-#include "shared.hpp"
-#include "task.hpp"
+#include "chainlink.hpp"
+#include "client.hpp"
+#include "fiat.hpp"
+#include "gauge.hpp"
+#include "local.hpp"
+#include "market.hpp"
+#include "buyer.hpp"
+#include "sleep.hpp"
+#include "uniswap.hpp"
+#include "updater.hpp"
 
 namespace orc {
 
-class Address;
-struct Block;
-class Chain;
-struct Fiat;
-
-template <typename Type_>
-class Updated;
-
-task<Float> Uniswap(const Chain &chain, const Block &block, const Address &pair);
-task<S<Updated<Fiat>>> UniswapFiat(unsigned milliseconds, S<Chain> chain);
-
+Buyer::Buyer(S<Market> market) :
+    Valve(typeid(*this).name()),
+    market_(std::move(market))
+{
 }
 
-#endif//ORCHID_UNISWAP_HPP
+task<S<Buyer>> Buyer::Create(unsigned milliseconds, S<Chain> chain) {
+    auto [fiat, gauge] = *co_await Parallel(
+        UniswapFiat(milliseconds, chain),
+        Opened(Make<Gauge>(milliseconds, chain->hack())));
+    auto market(Make<Market>(std::move(fiat), std::move(gauge)));
+    co_return Break<Buyer>(std::move(market));
+}
+
+task<void> Buyer::Shut() noexcept {
+    co_await Valve::Shut();
+}
+
+}

@@ -70,12 +70,16 @@ class Address :
         return Number<uint160_t>(num());
     }
 
+    std::string str() const;
+
     operator Argument() const {
         return buf();
     }
 };
 
-std::ostream &operator <<(std::ostream &out, const Address &address);
+inline std::ostream &operator <<(std::ostream &out, const Address &address) {
+    return out << address.str();
+}
 
 inline bool Each(const Address &address, const std::function<bool (const uint8_t *, size_t)> &code) {
     return address.buf().each(code);

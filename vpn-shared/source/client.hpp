@@ -35,23 +35,24 @@
 #include <rtc_base/ssl_fingerprint.h>
 
 #include "bond.hpp"
+#include "chain.hpp"
 #include "crypto.hpp"
-#include "endpoint.hpp"
 #include "jsonrpc.hpp"
 #include "judge.hpp"
 #include "locked.hpp"
 #include "nest.hpp"
 #include "origin.hpp"
+#include "provider.hpp"
 #include "signed.hpp"
 #include "ticket.hpp"
-#include "updated.hpp"
 
 // XXX: move this somewhere and maybe find a library
 namespace gsl { template <typename T> using owner = T; }
 
 namespace orc {
 
-class Market;
+class Buyer;
+class Shopper;
 
 class Client :
     public Pump<Buffer>,
@@ -60,15 +61,12 @@ class Client :
   private:
     const rtc::scoped_refptr<rtc::RTCCertificate> local_;
 
-    const std::string url_;
-    const U<rtc::SSLFingerprint> remote_;
+    const Provider provider_;
+    const S<Shopper> shopper_;
+    const S<Buyer> buyer_;
 
-    const Endpoint endpoint_;
-    const S<Market> market_;
-    const S<Updated<Float>> oracle_;
-
+    const S<Chain> chain_;
     const Address lottery_;
-    const uint256_t chain_;
 
     const Secret secret_;
     const Address funder_;
@@ -122,12 +120,18 @@ class Client :
     void Stop() noexcept override;
 
   public:
-    Client(BufferDrain &drain,
-        std::string url, U<rtc::SSLFingerprint> remote,
-        Endpoint endpoint, S<Market> market, S<Updated<Float>> oracle,
-        const Address &lottery, const uint256_t &chain,
+    Client(BufferDrain &drain, const Provider &provider, S<Shopper> shopper, S<Buyer> buyer,
+        S<Chain> chain, const Address &lottery,
         const Secret &secret, const Address &funder,
         const Address &seller, const uint128_t &face,
+        const char *justin
+    );
+
+    // XXX: this should be task<Client &> but cppcoro doesn't seem to support that
+    static task<Client *> Wire(BufferSunk &sunk, const S<Origin> &origin,
+        const Provider &provider, S<Shopper> shopper, S<Buyer> buyer,
+        S<Chain> chain, const Address &lottery,
+        const Secret &secret, const Address &funder,
         const char *justin
     );
 
@@ -145,7 +149,7 @@ class Client :
     Float Judgement();
     uint128_t Face();
     uint256_t Gas();
-    const std::string &URL();
+    const Locator &URL();
     Address Recipient();
 };
 

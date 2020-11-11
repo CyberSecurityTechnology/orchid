@@ -23,16 +23,22 @@
 #ifndef ORCHID_EXECUTOR_HPP
 #define ORCHID_EXECUTOR_HPP
 
-#include "endpoint.hpp"
+#include "chain.hpp"
 
 namespace orc {
 
+struct Execution {
+    std::optional<uint256_t> nonce;
+    std::optional<uint256_t> bid;
+    std::optional<uint64_t> gas;
+};
+
 class Executor {
   protected:
-    Endpoint &endpoint_;
+    Chain &chain_;
 
   public:
-    Executor(Endpoint &endpoint);
+    Executor(Chain &chain);
 
     virtual ~Executor() = default;
 
@@ -41,7 +47,7 @@ class Executor {
 
     virtual task<Bytes32> Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const uint64_t &gas, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const = 0;
 
-    task<Bytes32> Send(const std::optional<uint256_t> &nonce, const uint256_t &bid, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const;
+    task<Bytes32> Send(Execution execution, const std::optional<Address> &target, const uint256_t &value, const Buffer &data) const;
     task<Bytes32> Send(const std::optional<Address> &target, const uint256_t &value, const Buffer &data = Bytes()) const;
 };
 
@@ -66,7 +72,7 @@ class UnlockedExecutor :
     Address common_;
 
   public:
-    UnlockedExecutor(Endpoint &endpoint, Address common);
+    UnlockedExecutor(Chain &chain, Address common);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;
@@ -84,7 +90,7 @@ class PasswordExecutor :
     std::string password_;
 
   public:
-    PasswordExecutor(Endpoint &endpoint, Address common, std::string password);
+    PasswordExecutor(Chain &chain, Address common, std::string password);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;
@@ -101,7 +107,7 @@ class SecretExecutor :
     Secret secret_;
 
   public:
-    SecretExecutor(Endpoint &endpoint, const Secret &secret);
+    SecretExecutor(Chain &chain, const Secret &secret);
 
     operator Address() const override;
     task<Signature> operator ()(const Buffer &data) const override;

@@ -143,19 +143,19 @@ void Cashier::Stop(const std::string &error) noexcept {
     Valve::Stop();
 }
 
-Cashier::Cashier(Endpoint endpoint, const Float &price, const Executor &executor, const Address &lottery, const uint256_t &chain, const Address &recipient) :
+Cashier::Cashier(S<Chain> chain, const Float &price, const Executor &executor, const Address &lottery, const Address &recipient) :
     Valve(typeid(*this).name()),
 
-    endpoint_(std::move(endpoint)),
+    chain_(std::move(chain)),
     price_(price),
 
     executor_(executor),
 
-    balance_(Updating(60*1000, [endpoint = endpoint_, executor = Address(executor)]() -> task<uint256_t> {
-        co_return co_await endpoint.Balance(executor); }, "Balance")),
+    balance_(Updating(60*1000, [chain = chain_, executor = Address(executor)]() -> task<uint256_t> {
+        const auto block(co_await chain->Header("latest"));
+        co_return (co_await chain->Get(block, executor)).balance_; }, "Balance")),
 
     lottery_(lottery),
-    chain_(chain),
     recipient_(recipient)
 {
 }

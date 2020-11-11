@@ -54,7 +54,6 @@
 #include "pile.hpp"
 #include "remote.hpp"
 #include "router.hpp"
-#include "sequence.hpp"
 #include "sleep.hpp"
 #include "store.hpp"
 #include "time.hpp"
@@ -100,11 +99,8 @@ task<Host> Find(Origin &origin) {
     co_return Parse((co_await origin.Fetch("GET", {"https", "cydia.saurik.com", "443", "/debug.json"}, {}, {})).ok())["host"].asString();
 }
 
-task<std::string> Version(Origin &origin, const std::string &url) { try {
-    orc_assert(!url.empty());
-    orc_assert(url[url.size()-1] == '/');
-
-    auto version((co_await origin.Fetch("GET", Locator::Parse(url + "version.txt"), {}, {})).ok());
+task<std::string> Version(Origin &origin, const Locator &url) { try {
+    auto version((co_await origin.Fetch("GET", url + "version.txt", {}, {})).ok());
     const auto line(version.find('\n'));
     if (line != std::string::npos)
         version = version.substr(0, line);
@@ -136,13 +132,19 @@ task<Report> TestWireGuard(const S<Origin> &origin, std::string config) {
     });
 }
 
-task<Report> TestOrchid(const S<Origin> &origin, std::string name, Network &network, const char *provider, const Secret &secret, const Address &funder) {
-    (co_await orc_optic)->Name(provider);
+task<Report> TestOrchid(const S<Origin> &origin, std::string name, const S<Network> &network, const char *address, S<Chain> chain, const Secret &secret, const Address &funder) {
+    (co_await orc_optic)->Name(address);
 
-    std::cout << provider << " " << name << std::endl;
+    std::cout << address << " " << name << std::endl;
 
     co_return co_await Using<BufferSink<Remote>>([&](BufferSink<Remote> &remote) -> task<Report> {
-        auto &client(*co_await network.Select(remote, origin, "untrusted.orch1d.eth", provider, "0xb02396f06CC894834b7934ecF8c8E5Ab5C1d12F1", 1, secret, funder, nullptr));
+        const auto provider(co_await network->Select("untrusted.orch1d.eth", address));
+        auto &client(*co_await Client::Wire(remote, origin,
+            provider, shopper,
+            std::move(chain), "0xb02396f06CC894834b7934ecF8c8E5Ab5C1d12F1",
+            secret, funder,
+            nullptr
+        ));
         remote.Open();
 
         const auto host(co_await Find(remote));
@@ -166,20 +168,9 @@ task<Report> TestOrchid(const S<Origin> &origin, std::string name, Network &netw
         const auto recipient(client.Recipient());
         const auto version(co_await Version(*origin, client.URL()));
         const auto cost((spent - balance) / minimum * (1024 * 1024 * 1024));
-        co_return Report{provider, cost, speed, host, recipient, version};
+        co_return Report{provider.address_.str(), cost, speed, host, recipient, version};
     });
 }
-
-struct Stake {
-    uint256_t amount_;
-    Maybe<std::string> url_;
-
-    Stake(uint256_t amount, Maybe<std::string> url) :
-        amount_(std::move(amount)),
-        url_(std::move(url))
-    {
-    }
-};
 
 struct State {
     uint256_t timestamp_;
@@ -194,29 +185,6 @@ struct State {
 };
 
 std::shared_ptr<State> state_;
-
-template <typename Code_>
-task<void> Stakes(const Endpoint &endpoint, const Address &directory, const Block &block, const uint256_t &storage, const uint256_t &primary, const Code_ &code) {
-    if (primary == 0)
-        co_return;
-
-    const auto stake(Hash(Tie(primary, uint256_t(0x2U))).num<uint256_t>());
-    const auto [left, right, stakee, amount, delay] = co_await endpoint.Get(block, directory, storage, stake + 6, stake + 7, stake + 4, stake + 2, stake + 3);
-    orc_assert(amount != 0);
-
-    *co_await Parallel(
-        Stakes(endpoint, directory, block, storage, left, code),
-        Stakes(endpoint, directory, block, storage, right, code),
-        code(uint160_t(stakee), amount, delay));
-}
-
-template <typename Code_>
-task<void> Stakes(const Endpoint &endpoint, const Address &directory, const Code_ &code) {
-    const auto height(co_await endpoint.Height());
-    const auto block(co_await endpoint.Header(height));
-    const auto [account, root] = co_await endpoint.Get(block, directory, nullptr, 0x3U);
-    co_await Stakes(endpoint, directory, block, account.storage_, root, code);
-}
 
 task<Float> Kraken(Origin &origin, const std::string &pair) {
     co_return Float(Parse((co_await origin.Fetch("GET", {"https", "api.kraken.com", "443", "/0/public/Ticker?pair=" + pair}, {}, {})).ok())["result"][pair]["c"][0].asString());
@@ -312,34 +280,35 @@ int Main(int argc, const char *const argv[]) {
 
     Initialize();
 
-    const auto origin(Break<Local>());
-    const std::string rpc(args["rpc"].as<std::string>());
+    const unsigned milliseconds(60*1000);
 
-    Endpoint endpoint(origin, Locator::Parse(rpc));
+    const auto origin(Break<Local>());
+    const auto locator(Locator::Parse(args["rpc"].as<std::string>()));
+    const auto chain(Wait(Chain::Create({origin, locator}, Flags{}, 1)));
 
     const Address directory("0x918101FB64f467414e9a785aF9566ae69C3e22C5");
     const Address location("0xEF7bc12e0F6B02fE2cb86Aa659FdC3EBB727E0eD");
-    Network network(rpc, directory, location, origin);
+    const auto network(Break<Network>(chain, directory, location));
 
     const Address funder(args["funder"].as<std::string>());
     const auto secret(Bless<Secret>(args["secret"].as<std::string>()));
 
-    const auto coinbase(Wait(CoinbaseFiat(60*1000, origin, "USD")));
+    const auto coinbase(Wait(CoinbaseFiat(milliseconds, origin, "USD")));
 
-    const auto kraken(Wait(Opened(Updating(60*1000, [origin]() -> task<Fiat> {
+    const auto kraken(Wait(Opened(Updating(milliseconds, [origin]() -> task<Fiat> {
         co_return co_await Kraken(*origin);
     }, "Kraken"))));
 
-    const auto uniswap(Wait(UniswapFiat(60*1000, endpoint)));
+    const auto uniswap(Wait(UniswapFiat(milliseconds, chain)));
 
     // XXX: these are duplicated inside of Network (pass them in)
-    const auto chainlink(Wait(ChainlinkFiat(60*1000, endpoint)));
-    const auto gauge(Make<Gauge>(60*1000, origin));
+    const auto chainlink(Wait(ChainlinkFiat(milliseconds, chain)));
+    const auto gauge(Make<Gauge>(milliseconds, origin));
 
-    const auto account(Wait(Opened(Updating(60*1000, [endpoint, funder, signer = Address(Commonize(secret))]() -> task<std::pair<uint128_t, uint128_t>> {
+    const auto account(Wait(Opened(Updating(milliseconds, [chain, funder, signer = Address(Commonize(secret))]() -> task<std::pair<uint128_t, uint128_t>> {
         static const Address lottery("0xb02396f06cc894834b7934ecf8c8e5ab5c1d12f1");
         static const Selector<std::tuple<uint128_t, uint128_t, uint256_t, Address, Bytes32, Bytes>, Address, Address> look("look");
-        const auto [balance, escrow, unlock, verify, codehash, shared] = co_await look.Call(endpoint, "latest", lottery, uint256_t(90000), funder, signer);
+        const auto [balance, escrow, unlock, verify, codehash, shared] = co_await look.Call(*chain, "latest", lottery, uint256_t(90000), funder, signer);
         co_return std::make_pair(balance, escrow);
     }, "Account"))));
 
@@ -360,31 +329,7 @@ int Main(int argc, const char *const argv[]) {
 
         *co_await Parallel([&]() -> task<void> { try {
             (co_await orc_optic)->Name("Stakes");
-
-            cppcoro::async_mutex mutex;
-            std::map<Address, uint256_t> stakes;
-
-            co_await Stakes(endpoint, directory, [&](const Address &stakee, const uint256_t &amount, const uint256_t &delay) -> task<void> {
-                std::cout << "DELAY " << stakee << " " << std::dec << delay << " " << std::dec << amount << std::endl;
-                if (delay < 90*24*60*60)
-                    co_return;
-                const auto lock(co_await mutex.scoped_lock_async());
-                stakes[stakee] += amount;
-            });
-
-            // XXX: Zip doesn't work if I inline this argument
-            const auto urls(co_await Parallel(Map([&](const auto &stake) {
-                return [&](Address provider) -> Task<std::string> {
-                    static const Selector<std::tuple<uint256_t, Bytes, Bytes, Bytes>, Address> look_("look");
-                    const auto &[set, url, tls, gpg] = co_await look_.Call(endpoint, "latest", location, 90000, provider);
-                    orc_assert(set != 0);
-                    co_return url.str();
-                }(stake.first);
-            }, stakes)));
-
-            // XXX: why can't I move things out of this iterator? (note: I did use auto)
-            for (const auto &stake : Zip(urls, stakes))
-                orc_assert(state->stakes_.try_emplace(stake.get<1>().first, stake.get<1>().second, stake.get<0>()).second);
+            state->stakes_ = co_await network->Scan();
         } catch (...) {
         } }(), [&]() -> task<void> {
             (co_await orc_optic)->Name("Tests");
@@ -413,7 +358,7 @@ int Main(int argc, const char *const argv[]) {
                 {"0x40e7cA02BA1672dDB1F90881A89145AC3AC5b569", "VPNSecure"},
             }) {
                 names.emplace_back(name);
-                tests.emplace_back(TestOrchid(origin, name, network, provider, secret, funder));
+                tests.emplace_back(TestOrchid(origin, name, network, provider, chain, secret, funder));
             }
 
             auto reports(co_await Parallel(std::move(tests)));

@@ -30,7 +30,7 @@
 namespace orc {
 
 class Address;
-class Endpoint;
+class Chain;
 
 struct Fiat;
 
@@ -39,8 +39,8 @@ class Updated;
 
 static const Float Ten8("100000000");
 
-task<Float> Chainlink(const Endpoint &endpoint, const Address &aggregation, const Float &adjust);
-task<S<Updated<Fiat>>> ChainlinkFiat(unsigned milliseconds, Endpoint endpoint);
+task<Float> Chainlink(const Chain &chain, const Address &aggregation, const Float &adjust);
+task<S<Updated<Fiat>>> ChainlinkFiat(unsigned milliseconds, S<Chain> chain);
 
 }
 

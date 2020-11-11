@@ -34,7 +34,7 @@
 
 namespace orc {
 
-class Locator;
+struct Locator;
 class Origin;
 
 task<Response> Fetch(Origin &origin, const std::string &method, const Locator &locator, const std::map<std::string, std::string> &headers, const std::string &data, const std::function<bool (const std::list<const rtc::OpenSSLCertificate> &)> &verify = nullptr);

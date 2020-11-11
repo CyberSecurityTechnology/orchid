@@ -24,10 +24,10 @@
 #include <pc/webrtc_sdp.h>
 
 #include "cashier.hpp"
+#include "chain.hpp"
 #include "channel.hpp"
 #include "crypto.hpp"
 #include "datagram.hpp"
-#include "endpoint.hpp"
 #include "local.hpp"
 #include "market.hpp"
 #include "protocol.hpp"

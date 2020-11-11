@@ -27,12 +27,11 @@
 
 namespace orc {
 
-class Locator final {
-  public:
-    const std::string scheme_;
-    const std::string host_;
-    const std::string port_;
-    const std::string path_;
+struct Locator final {
+    std::string scheme_;
+    std::string host_;
+    std::string port_;
+    std::string path_;
 
     static Locator Parse(const std::string &url);
 
@@ -50,6 +49,10 @@ class Locator final {
 
     bool operator <(const Locator &rhs) const {
         return Tuple() < rhs.Tuple();
+    }
+
+    Locator operator +(const char *path) const {
+        return {scheme_, host_, port_, path_ + path};
     }
 };
 

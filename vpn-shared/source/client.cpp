@@ -24,6 +24,7 @@
 
 #include <rtc_base/openssl_identity.h>
 
+#include "buyer.hpp"
 #include "channel.hpp"
 #include "client.hpp"
 #include "datagram.hpp"
@@ -65,7 +66,7 @@ task<void> Client::Submit() {
 task<void> Client::Submit(const Bytes32 &hash, const Ticket &ticket, const Bytes &receipt, const Signature &signature) {
     const Header header{Magic_, hash};
     co_await Send(Datagram(Port_, Port_, Tie(header,
-        Command(Submit_, uint8_t(signature.v_ + 27), signature.r_, signature.s_, ticket.Knot(lottery_, chain_, receipt))
+        Command(Submit_, uint8_t(signature.v_ + 27), signature.r_, signature.s_, ticket.Knot(lottery_, *chain_, receipt))
     )));
 }
 
@@ -84,10 +85,10 @@ task<void> Client::Submit(uint256_t amount) {
 
     const uint128_t ratio(WinRatio_ == 0 ? amount / face_ : uint256_t(Float(Two128) * WinRatio_ - 1));
     const Ticket ticket{commit, now, nonce, face_, ratio, start, 0, funder_, recipient};
-    const auto hash(ticket.Encode0(lottery_, chain_, receipt));
+    const auto hash(ticket.Encode0(lottery_, *chain_, receipt));
     const auto signature(Sign(secret_, Hash(Tie("\x19""Ethereum Signed Message:\n32", hash))));
     // XXX: this code is backwards and needs to calculate this before the other thing
-    const auto [expected, price] = market_->Credit(now, start, 0, face_, ratio, Gas());
+    const auto [expected, price] = buyer_->Credit(now, start, 0, face_, ratio, Gas());
     { const auto locked(locked_());
         Justin("payment", 3, amount >> 128);
         locked->pending_.try_emplace(hash, Pending{ticket, signature, expected}); }
@@ -111,7 +112,7 @@ cppcoro::shared_task<Bytes> Client::Ring(Address recipient) {
         co_return Bytes();
     static const Selector<std::tuple<Bytes>, Bytes, Address> ring_("ring");
     static const std::string latest("latest");
-    co_return std::get<0>(co_await ring_.Call(endpoint_, latest, seller_, 90000, hoarded_, recipient));
+    co_return std::get<0>(co_await ring_.Call(*chain_, latest, seller_, 90000, hoarded_, recipient));
 }
 
 void Client::Land(Pipe *pipe, const Buffer &data) {
@@ -134,7 +135,7 @@ void Client::Land(Pipe *pipe, const Buffer &data) {
 
             const auto [serial, balance, lottery, chain, recipient, commit] = Take<int64_t, uint256_t, Address, uint256_t, Address, Bytes32>(window);
             orc_assert(lottery == lottery_);
-            orc_assert(chain == chain_);
+            orc_assert(chain == *chain_);
 
             const auto locked(locked_());
 
@@ -172,7 +173,7 @@ void Client::Land(Pipe *pipe, const Buffer &data) {
             if (justin_ != nullptr)
                 Log() << "JUSTIN predict " << std::dec << (predicted >> 128);
 
-            locked->judgement_ = locked->judge_(time, locked->spent_, locked->output_ + locked->input_, (*oracle_)());
+            locked->judgement_ = locked->judge_(time, locked->spent_, locked->output_ + locked->input_, (*shopper_)());
 
             if (prepay_ > predicted)
                 nest_.Hatch([&]() noexcept { return [this, amount = uint256_t(prepay_ * 2 - predicted)]() -> task<void> {
@@ -193,30 +194,47 @@ void Client::Stop() noexcept {
     Pump::Stop();
 }
 
-Client::Client(BufferDrain &drain,
-    std::string url, U<rtc::SSLFingerprint> remote,
-    Endpoint endpoint, S<Market> market, S<Updated<Float>> oracle,
-    const Address &lottery, const uint256_t &chain,
+Client::Client(BufferDrain &drain, const Provider &provider, S<Shopper> shopper, S<Buyer> buyer,
+    S<Chain> chain, const Address &lottery,
     const Secret &secret, const Address &funder,
     const Address &seller, const uint128_t &face,
     const char *justin
 ) :
     Pump(typeid(*this).name(), drain),
     local_(Certify()),
-    url_(std::move(url)),
-    remote_(std::move(remote)),
-    endpoint_(std::move(endpoint)),
-    market_(std::move(market)),
-    oracle_(std::move(oracle)),
+    provider_(provider),
+    shopper_(std::move(shopper)),
+    buyer_(std::move(buyer)),
+    chain_(std::move(chain)),
     lottery_(lottery),
-    chain_(chain),
     secret_(secret),
     funder_(funder),
     seller_(seller),
     face_(face),
-    prepay_(market_->Convert((*oracle_)()/1024*2)),
+    prepay_(buyer_->Convert((*shopper_)()/1024*2)),
     justin_(justin == nullptr ? nullptr : fopen(justin, "w"))
 {
+}
+
+task<Client *> Client::Wire(BufferSunk &sunk, const S<Origin> &origin,
+    const Provider &provider, S<Shopper> shopper, S<Buyer> buyer,
+    S<Chain> chain, const Address &lottery,
+    const Secret &secret, const Address &funder,
+    const char *justin
+) {
+    static const Selector<std::tuple<uint128_t, uint128_t, uint256_t, Address, Bytes32, Bytes>, Address, Address> look_("look");
+    const auto [amount, escrow, unlock, seller, codehash, shared] = co_await look_.Call(*chain, "latest", lottery, 90000, funder, Address(Commonize(secret)));
+    orc_assert(unlock == 0);
+
+    auto &client(sunk.Wire<Client>(provider, std::move(shopper), std::move(buyer),
+        std::move(chain), lottery,
+        secret, funder,
+        seller, std::min(amount, escrow / 2),
+        justin
+    ));
+
+    co_await client.Open(origin);
+    co_return &client;
 }
 
 Client::~Client() {
@@ -227,7 +245,7 @@ Client::~Client() {
 task<void> Client::Open(const S<Origin> &origin) {
     const auto verify([&](const std::list<const rtc::OpenSSLCertificate> &certificates) -> bool {
         for (const auto &certificate : certificates)
-            if (*remote_ == *rtc::SSLFingerprint::Create(remote_->algorithm, certificate))
+            if (*provider_.fingerprint_ == *rtc::SSLFingerprint::Create(provider_.fingerprint_->algorithm, certificate))
                 return true;
         return false;
     });
@@ -239,7 +257,7 @@ task<void> Client::Open(const S<Origin> &origin) {
         configuration.tls_ = local_;
         return configuration;
     }(), [&](std::string offer) -> task<std::string> {
-        const auto answer((co_await origin->Fetch("POST", Locator::Parse(url_), {}, offer, verify)).ok());
+        const auto answer((co_await origin->Fetch("POST", provider_.locator_, {}, offer, verify)).ok());
         if (Verbose) {
             Log() << "Offer: " << offer << std::endl;
             Log() << "Answer: " << answer << std::endl;
@@ -278,7 +296,7 @@ Float Client::Spent() {
 Float Client::Balance() {
     // XXX: return task<int256> and merge Update
     const auto locked(locked_());
-    return market_->Convert(locked->balance_);
+    return buyer_->Convert(locked->balance_);
 }
 
 Float Client::Judgement() {
@@ -294,8 +312,8 @@ uint256_t Client::Gas() {
     return seller_ == Address(0) ? 84000 /*83267*/ : 103000;
 }
 
-const std::string &Client::URL() {
-    return url_;
+const Locator &Client::URL() {
+    return provider_.locator_;
 }
 
 Address Client::Recipient() {

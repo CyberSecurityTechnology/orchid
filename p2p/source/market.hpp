@@ -39,7 +39,7 @@ class Market {
     const S<Gauge> gauge_;
 
   public:
-    Market(unsigned milliseconds, const S<Origin> &origin, S<Updated<Fiat>> fiat);
+    Market(S<Updated<Fiat>> fiat, S<Gauge> gauge);
 
     Float Convert(const checked_int256_t &balance) const;
     checked_int256_t Convert(const Float &balance) const;

@@ -31,6 +31,7 @@
 
 #include "acceptor.hpp"
 #include "boring.hpp"
+#include "buyer.hpp"
 #include "datagram.hpp"
 #include "capture.hpp"
 #include "client.hpp"
@@ -46,6 +47,7 @@
 #include "port.hpp"
 #include "retry.hpp"
 #include "remote.hpp"
+#include "shopper.hpp"
 #include "syscall.hpp"
 #include "trace.hpp"
 #include "transport.hpp"
@@ -674,19 +676,23 @@ static JSValue Print(JSContext *context, JSValueConst self, int argc, JSValueCon
     return JS_ThrowInternalError(context, "%s", error.what());
 } }
 
-static task<void> Single(BufferSunk &sunk, Heap &heap, Network &network, const S<Origin> &origin, const Host &local, unsigned hop, const boost::filesystem::path &group) { orc_block({
+static task<void> Single(BufferSunk &sunk, Heap &heap, const S<Network> &network, const S<Shopper> &shopper, const S<Buyer> &buyer, const S<Origin> &origin, const Host &local, unsigned hop, const boost::filesystem::path &group, const Locator &locator) { orc_block({
     const std::string hops("hops[" + std::to_string(hop) + "]");
     const auto protocol(heap.eval<std::string>(hops + ".protocol"));
     if (false) {
     } else if (protocol == "orchid") {
         const Address lottery(heap.eval<std::string>(hops + ".lottery", "0xb02396f06CC894834b7934ecF8c8E5Ab5C1d12F1"));
-        const uint256_t chain(heap.eval<double>(hops + ".chainid", 1));
         const auto secret(orc_value(return, Bless<Secret>(heap.eval<std::string>(hops + ".secret")), "parsing .secret"));
         const Address funder(heap.eval<std::string>(hops + ".funder"));
         const std::string curator(heap.eval<std::string>(hops + ".curator"));
-        const Address provider(heap.eval<std::string>(hops + ".provider", "0x0000000000000000000000000000000000000000"));
         const std::string justin(heap.eval<std::string>(hops + ".justin", ""));
-        co_await network.Select(sunk, origin, curator, provider, lottery, chain, secret, funder, justin.empty() ? nullptr : boost::filesystem::absolute(justin, group).string().c_str());
+        auto chain(co_await Chain::Create({origin, locator}, Flags{}, uint256_t(heap.eval<double>(hops + ".chainid", 1))));
+        const auto provider(co_await network->Select(curator, heap.eval<std::string>(hops + ".provider", "0x0000000000000000000000000000000000000000")));
+        co_await Client::Wire(sunk, origin, provider, shopper, buyer,
+            std::move(chain), lottery,
+            secret, funder,
+            justin.empty() ? nullptr : boost::filesystem::absolute(justin, group).string().c_str()
+        );
     } else if (protocol == "openvpn") {
         co_await Connect(sunk, origin, local,
             heap.eval<std::string>(hops + ".ovpnfile"),
@@ -748,21 +754,28 @@ void Capture::Start(const std::string &path) {
     auto &sunk(Start());
 #endif
 
-    Network network(heap.eval<std::string>("rpc"), Address(heap.eval<std::string>("eth_directory")), Address(heap.eval<std::string>("eth_location")), local);
-
-    auto code([this, heap = std::move(heap), hops, local = std::move(local), network = std::move(network), host, group](BufferSunk &sunk) mutable -> task<void> {
+    auto code([this, heap = std::move(heap), hops, local = std::move(local), host, group](BufferSunk &sunk) mutable -> task<void> {
         locked_()->connected_ = false;
+
+        const auto locator(Locator::Parse(heap.eval<std::string>("rpc")));
+        const auto directory(Address(heap.eval<std::string>("eth_directory")));
+        const auto location(Address(heap.eval<std::string>("eth_location")));
+
+        const auto chain(co_await Chain::Create({local, locator}, Flags{}, 1));
+        const auto network(Break<Network>(chain, directory, location));
+        const auto shopper(co_await Shopper::Create(chain));
+        const auto buyer(co_await Buyer::Create(chain));
 
         auto origin(local);
 
         for (unsigned i(0); i != hops - 1; ++i) {
             auto remote(Break<BufferSink<Remote>>());
-            co_await Single(*remote, heap, network, origin, remote->Host(), i, group);
+            co_await Single(*remote, heap, network, shopper, buyer, origin, remote->Host(), i, group, locator);
             remote->Open();
             origin = std::move(remote);
         }
 
-        co_await Single(sunk, heap, network, origin, host, hops - 1, group);
+        co_await Single(sunk, heap, network, shopper, buyer, origin, host, hops - 1, group, locator);
         locked_()->connected_ = true;
     });
 

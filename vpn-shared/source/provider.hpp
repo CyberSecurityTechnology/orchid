@@ -20,26 +20,21 @@
 /* }}} */
 
 
-#ifndef ORCHID_UNISWAP_HPP
-#define ORCHID_UNISWAP_HPP
+#ifndef ORCHID_PROVIDER_HPP
+#define ORCHID_PROVIDER_HPP
 
-#include "float.hpp"
-#include "shared.hpp"
-#include "task.hpp"
+#include "chain.hpp"
+#include "jsonrpc.hpp"
+#include "locator.hpp"
 
 namespace orc {
 
-class Address;
-struct Block;
-class Chain;
-struct Fiat;
-
-template <typename Type_>
-class Updated;
-
-task<Float> Uniswap(const Chain &chain, const Block &block, const Address &pair);
-task<S<Updated<Fiat>>> UniswapFiat(unsigned milliseconds, S<Chain> chain);
+struct Provider {
+    Address address_;
+    Locator locator_;
+    S<rtc::SSLFingerprint> fingerprint_;
+};
 
 }
 
-#endif//ORCHID_UNISWAP_HPP
+#endif//ORCHID_PROVIDER_HPP
